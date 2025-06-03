@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <stdlib.h> //for atoi
 
 #if CONFIG_FREERTOS_UNICORE  // this is just limiting the cpu to 1 core for demonstration purposes
 static const BaseType_t app_cpu = 0;
@@ -6,34 +7,59 @@ static const BaseType_t app_cpu = 0;
 static const BaseType_t app_cpu = 1;
 #endif
 
-//a string to print
-const char msg[] = "yo ho yo ho A pirate's life for me";
 
-//task handles
-static TaskHandle_t task_1 = NULL; //this just initializes the task handles to null, they are set later by xTaskCreatePinnedToCore
-static TaskHandle_t task_2 = NULL;
 
-//The task
+//Pins
+static const int led_pin = LED_BUILTIN;
 
-void startTask1(void *parameter){
-    int msg_len = strlen(msg);
+//setting
+static const uint8_t buf_len = 20;
 
-    while(1){
-        Serial.println();
-        for (int i = 0 ; i < msg_len; i++){
+//global variables
+static int led_delay = 500; //default for led if no other value is set
 
-            Serial.print(msg[i]);
+void readSerial(void *parameter){ //this function monitors for user input to change blinking rate
+    char c; //character
+    char buf[buf_len]; //create an array of char 20 chars long
+    uint8_t idx = 0; //start index at 0
+
+    memset(buf,0,buf_len); //set everything in buffer to 0
+
+    while (1)
+    {
+    if(Serial.available() > 0){ //if serial is available
+        c = Serial.read(); //get a char from serial
+        if (c == '\n') { //if we are  at the end of the string
+
+            led_delay = atoi(buf); //convert the string we have created to an integer
+            Serial.print("Updated LED delay to: ");
+            Serial.println(led_delay);
+            memset(buf, 0, buf_len); //set the buffer back to 0
+            idx = 0; //reset index
+            } else {
+
+            // Only append if index is not over message limit
+                if (idx < buf_len - 1) { //if we are not yet at the end of the string, append the integer
+                    buf[idx] = c;
+                    idx++; //may not be right
+                }
+            }
         }
-        Serial.println();
-        vTaskDelay(1000/portTICK_PERIOD_MS);
     }
+
 }
 
-void startTask2(void *parameter){
-    while(1){
-        Serial.print('*');
-        vTaskDelay(100/portTICK_PERIOD_MS);
+void blinkLed(void *parameter){//this task should toggle led at rate given by user
+
+    while (1)
+    {
+        digitalWrite(led_pin,HIGH);
+        vTaskDelay(led_delay/portTICK_PERIOD_MS);
+        digitalWrite(led_pin,LOW);
+        vTaskDelay(led_delay/portTICK_PERIOD_MS);
     }
+    
+
 }
 
 
@@ -41,53 +67,41 @@ void startTask2(void *parameter){
 
 void setup() {
 
-    Serial.begin(300);
+    Serial.begin(115200);
+
+    pinMode(led_pin,OUTPUT);
 
     //wait for a bit
-    vTaskDelay(1000/ portTICK_PERIOD_MS);
-    Serial.println();
-    Serial.println("FreeRTOS task demo");
+    vTaskDelay(1000/ portTICK_PERIOD_MS); //delay for 1 second just to be safe
 
-    Serial.print("setup and loop task running on core: ");
-    Serial.print(xPortGetCoreID());
-    Serial.print(" With Priority ");
-    Serial.println(uxTaskPriorityGet(NULL));
+    Serial.println("Multi-task LED Demo");
+    Serial.println("Enter a number in milliseconds to change the LED delay.");
 
 
-    xTaskCreatePinnedToCore(startTask1,
-        "Task 1",
+    xTaskCreatePinnedToCore(blinkLed,
+        "blinkLed",
         1024,   //how big the stack should be 
         NULL,   //parameters
         1,      //priority
-        &task_1, //this is passing in the task handle we made ealier
+        NULL, //no need to create a handle as we are not controlling 
         app_cpu); //last param is core
 
 
-    xTaskCreatePinnedToCore(startTask2,
-        "Task 2",
+    xTaskCreatePinnedToCore(readSerial,
+        "readSerial",
         1024,   //how big the stack should be 
         NULL,   //parameters
-        2,      //priority
-        &task_2, //this is passing in the task handle we made ealier
+        1,      //priority
+        NULL,   //handle
         app_cpu); //last param is core
-}
+
+        vTaskDelete(NULL); //passing null causes the calling task to be deleted, so once we are finished setup, the only tasks will be the serial read and blinkled
+
+
+    }
 
 
 void loop() {
-  // put your main code here, to run repeatedly:
 
-  for(int i = 0; i < 3; i++){
-    vTaskSuspend(task_2); 
-    vTaskDelay(2000/portTICK_PERIOD_MS);
-    vTaskResume(task_2);
-    vTaskDelay(2000/portTICK_PERIOD_MS);
-  }
-
-  //after suspending it 3 times, we delete the task
-
-  if(task_1 != NULL){
-    vTaskDelete(task_1);
-    task_1=NULL;
-  }
 }
 
