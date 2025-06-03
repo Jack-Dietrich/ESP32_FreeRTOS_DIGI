@@ -6,72 +6,88 @@ static const BaseType_t app_cpu = 0;
 static const BaseType_t app_cpu = 1;
 #endif
 
+//a string to print
+const char msg[] = "yo ho yo ho A pirate's life for me";
 
-//Pins 
-static const int led_pin = LED_BUILTIN;
+//task handles
+static TaskHandle_t task_1 = NULL; //this just initializes the task handles to null, they are set later by xTaskCreatePinnedToCore
+static TaskHandle_t task_2 = NULL;
 
 //The task
 
-void toggleLED(void *param){
+void startTask1(void *parameter){
+    int msg_len = strlen(msg);
 
-    while (1)
-    {
-        digitalWrite(led_pin,HIGH);
-        vTaskDelay(500/portTICK_PERIOD_MS);
-        digitalWrite(led_pin,LOW);
-        vTaskDelay(500/portTICK_PERIOD_MS);
+    while(1){
+        Serial.println();
+        for (int i = 0 ; i < msg_len; i++){
 
+            Serial.print(msg[i]);
+        }
+        Serial.println();
+        vTaskDelay(1000/portTICK_PERIOD_MS);
     }
-    
-
 }
 
-
-//challenge task
-void toggleLED2(void *param){
-
-    while (1)
-    {
-        digitalWrite(led_pin,HIGH);
-        vTaskDelay(200/portTICK_PERIOD_MS);
-        digitalWrite(led_pin,LOW);
-        vTaskDelay(200/portTICK_PERIOD_MS);
-
+void startTask2(void *parameter){
+    while(1){
+        Serial.print('*');
+        vTaskDelay(100/portTICK_PERIOD_MS);
     }
-    
-
 }
 
 
 // put function declarations here:
 
 void setup() {
-    pinMode(led_pin,OUTPUT);
+
+    Serial.begin(300);
+
+    //wait for a bit
+    vTaskDelay(1000/ portTICK_PERIOD_MS);
+    Serial.println();
+    Serial.println("FreeRTOS task demo");
+
+    Serial.print("setup and loop task running on core: ");
+    Serial.print(xPortGetCoreID());
+    Serial.print(" With Priority ");
+    Serial.println(uxTaskPriorityGet(NULL));
 
 
-    xTaskCreatePinnedToCore(
-        toggleLED,
-        "Toggle LED",
-        1024,
-        NULL, 
-        1,
-        NULL,
-        app_cpu);
+    xTaskCreatePinnedToCore(startTask1,
+        "Task 1",
+        1024,   //how big the stack should be 
+        NULL,   //parameters
+        1,      //priority
+        &task_1, //this is passing in the task handle we made ealier
+        app_cpu); //last param is core
 
-    xTaskCreatePinnedToCore(
-        toggleLED2,
-        "Toggle LED2",
-        1024,
-        NULL, 
-        1,
-        NULL,
-        app_cpu);        
 
+    xTaskCreatePinnedToCore(startTask2,
+        "Task 2",
+        1024,   //how big the stack should be 
+        NULL,   //parameters
+        2,      //priority
+        &task_2, //this is passing in the task handle we made ealier
+        app_cpu); //last param is core
 }
-
 
 
 void loop() {
   // put your main code here, to run repeatedly:
+
+  for(int i = 0; i < 3; i++){
+    vTaskSuspend(task_2); 
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+    vTaskResume(task_2);
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+  }
+
+  //after suspending it 3 times, we delete the task
+
+  if(task_1 != NULL){
+    vTaskDelete(task_1);
+    task_1=NULL;
+  }
 }
 
