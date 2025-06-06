@@ -14,36 +14,43 @@ static const BaseType_t app_cpu = 1;
 //Pins
 static const int led_pin = LED_BUILTIN;
 
-//setting
+//settings
 static const uint8_t buf_len = 255;//so user can type in 255 chars max
 static const uint8_t msg_queue_len = 5;
+static const char command[] = "delay "; //this is so we can remove it to get the led delay when parsing thru given command.
+static const uint8_t delay_queue_len = 5;
+static const uint8_t blink_max = 100; //number of times we blink before we send a message
 
-//global variables
-//pointer
+typedef struct { //this is our struct of the message
+    char body[20];
+    int count;
+} Message;
 
 
 //handles
-static QueueHandle_t queue1; //handle to queue 1
-static QueueHandle_t queue2; //handle to queue 2
+static QueueHandle_t delay_queue; //handle to queue 1
+static QueueHandle_t msg_queue; //handle to queue 2
 
 
 //task A
-void TaskA(void *parameter){ //this function monitors for user input to change blinking rate
+void CLI(void *parameter){ //this function monitors for user input to change blinking rate
+    
+    Message rcv_msg; //using our struct to create a message
     char c; //character
     char buf[buf_len]; //create an array of char 255 char long
     uint8_t idx = 0; //start index at 0
-    char msg[buf_len];//this will store the message from queue 2
-    int cmd_len = 6;
+    uint8_t cmd_len = strlen(command);//how long is the command.
     int led_delay;
 
-    memset(buf,0,buf_len); //set everything in buffer to 0
+    memset(buf,0,buf_len); //set everything in buffer to 0 (clear buffer)
 
     while (1)
     {
 
         //first we want to see if there is a message in the queue
-    if(xQueueReceive(queue2, (void *)&msg, 0) == pdTRUE){//true if read from queue
-        Serial.print(msg); //print out the item we read in
+    if(xQueueReceive(msg_queue, (void *)&rcv_msg, 0) == pdTRUE){//true if read from queue
+        Serial.print(rcv_msg.body); //print out the body of the message
+        Serial.println(rcv_msg.count); 
     }
 
 
@@ -55,29 +62,32 @@ void TaskA(void *parameter){ //this function monitors for user input to change b
             idx++;
         }
         
-        if (c == '\n' || (c == '\r')) { //if we are  at the end of the string (newline or carrage return?)
-
-            buf[idx-1] = '\0'; //make the string null terminated
+        if ((c == '\n') || (c == '\r')) { //if we are  at the end of the string (newline or carrage return?)
 
             Serial.print("\r\n");
 
             //now we need to check if string if of the format delay xxx
-            if(strstr(msg, "delay " ) != NULL){
-                //if the message we input has delay followed by a space we want to read the number that comes after(this is prone to error if someone were to enter letters)
-                //also need to convert to integer
-                char * tail = buf - cmd_len;  //possible source of error
+            if(memcmp(buf,command,cmd_len) == 0) {//here we compare the buffer(what we read in) with the command
+                
+                //if they are the same, we may have a delay xxx comand.
+
+                char * tail = buf - cmd_len; //makes a pointer to the start of the string that we want to read.
                 led_delay = atoi(tail);
-                led_delay = abs(led_delay);
+                led_delay = abs(led_delay); 
+
+
+                if (xQueueSend(delay_queue, (void *)&led_delay, 10) != pdTRUE) {//just invoking the left half of this check will send it to queue, and if it returns false that is when the error handling happens.
+                    Serial.println("ERROR: Could not put item on delay queue.");
+                }
+
 
             }
 
 
-            if (xQueueSend(queue2, (void *)&led_delay, 10) != pdTRUE) {//just invoking the left half of this check will send it to queue, and if it returns false that is when the error handling happens.
-            Serial.println("ERROR: Could not put item on delay queue.");
-            }
                
             memset(buf, 0, buf_len); //set the buffer back to 0
             idx = 0; //reset index
+
             } 
             
             else{
@@ -89,33 +99,48 @@ void TaskA(void *parameter){ //this function monitors for user input to change b
 
 }
 
-void TaskB(void *parameter){//this task should print back the dynamically allocated message then free it.
+void blinkLED(void *parameter){//this task should print back the dynamically allocated message then free it.
     
-    int item; //for storing the item retrived from the queue
-    int time; //time to blink led for
-    int blinkCount = 0;
+    Message msg; //create a message
+    int led_delay = 500; //default LED delay
+    uint8_t counter = 0;
+
+    pinMode(LED_BUILTIN,OUTPUT);
     
-    while (true){
-    if(blinkCount == 100){
-        xQueueSend(queue2,"Blinked",0);//sending Blinked to Queue2
+    while (true){//forever loop
+
+
+    if(xQueueReceive(delay_queue, (void *)&led_delay, 0) == pdTRUE){//true if read from queue
+
+        strcpy(msg.body, "Message received ");
+        msg.count = 1;
+        xQueueSend(msg_queue,(void *)&msg, 10);
+
+
     }
 
-    if(xQueueReceive(queue2, (void *)&item, 0) == pdTRUE){//true if read from queue
-        Serial.print(item); //print out the item we read in
-    }
-
-    time = item;
 
     //blink the led at the specified rate
 
     digitalWrite(led_pin,HIGH);
-    vTaskDelay(time/portTICK_PERIOD_MS);
+    vTaskDelay(led_delay/portTICK_PERIOD_MS);
     digitalWrite(led_pin,LOW);
-    vTaskDelay(time/portTICK_PERIOD_MS);
+    vTaskDelay(led_delay/portTICK_PERIOD_MS);
 
+    counter++;
 
+    if(counter >= blink_max){
 
-    blinkCount++;
+        //create message to send
+        strcpy(msg.body, "Blinked: ");
+        msg.count = counter;
+        xQueueSend(msg_queue,(void *)&msg,10);
+
+        counter = 0;
+    }
+
+    
+
     }
 
 }
@@ -133,15 +158,19 @@ void setup() {
     //wait for a bit
     vTaskDelay(1000/ portTICK_PERIOD_MS); //delay for 1 second just to be safe
 
+    //printing
+    Serial.println("Queue Testing \n Enter the command 'delay xxx' where xxx is an integer to switch the blinking rate of the led\n LED blink time in miliseconds:");
+
+
 
     //create queue 1 and queue 2
-    queue1 = xQueueCreate(msg_queue_len,sizeof(int));//queue 1 is storing integers, so each I tem only needs to be 1 int size.
-    queue2 = xQueueCreate(msg_queue_len,sizeof(char)*buf_len);//queue 2 is storing strings, with max len of 255
+    delay_queue = xQueueCreate(delay_queue_len,sizeof(int));//queue 1 is storing integers, so each I tem only needs to be 1 int size.
+    msg_queue = xQueueCreate(msg_queue_len,sizeof(Message));//queue 2 is storing strings, with max len of 255
 
 
 
-    xTaskCreatePinnedToCore(TaskA,
-        "TaskA",
+    xTaskCreatePinnedToCore(CLI,
+        "CLI",
         1024,   //how big the stack should be 
         NULL,   //parameters
         1,      //priority
@@ -149,8 +178,8 @@ void setup() {
         app_cpu); //last param is core
 
 
-    xTaskCreatePinnedToCore(TaskB,
-        "TaskB",
+    xTaskCreatePinnedToCore(blinkLED,
+        "blinkLED",
         1024,   //how big the stack should be 
         NULL,   //parameters
         1,      //priority
