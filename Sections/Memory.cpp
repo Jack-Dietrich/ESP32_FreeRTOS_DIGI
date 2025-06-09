@@ -22,7 +22,7 @@ static volatile uint8_t msg_flag = 0;
 
 void readSerial(void *parameter){ //this function monitors for user input to change blinking rate
     char c; //character
-    char buf[buf_len]; //create an array of char 20 chars long
+    char buf[buf_len]; //create an array of char to store our message
     uint8_t idx = 0; //start index at 0
 
     memset(buf,0,buf_len); //set everything in buffer to 0
